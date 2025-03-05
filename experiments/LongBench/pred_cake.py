@@ -223,7 +223,7 @@ if __name__ == '__main__':
     for dataset in datasets:
         #load offline 
         data_files = {"test": f"{dataset}.jsonl"}
-        data = load_dataset("json", data_dir='/modelopsnas/modelops/436875/datasets/longbench/data' ,split='test', data_files=data_files)
+        data = load_dataset("json", data_dir='./datasets/longbench/data', split='test', data_files=data_files)
 
         if not os.path.exists(f"./pred_result/{cache_name}/{pred_name}/{model_name}"):
             os.makedirs(f"./pred_result/{cache_name}/{pred_name}/{model_name}")
