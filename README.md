@@ -42,14 +42,7 @@ python experiments/LongBench/pred_cake.py \
     --cache_size 1024 \
     --window_size 32
 ```
-<!-- def parse_args(args=None):
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--model', type=str, default="llama3.1-8b-128k")
-    parser.add_argument('--e', action='store_true', help="Evaluate on LongBench-E")
-    parser.add_argument('--cache_size', type=int, default=1024)
-    parser.add_argument('--eval_avg', action='store_true')
-    parser.add_argument('--dir_path', type=str, default="pred_result")
-    return parser.parse_args(args) -->
+
 Run evaluation:
 ```
 python experiments/LongBench/eval.py \
