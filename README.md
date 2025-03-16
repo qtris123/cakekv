@@ -37,7 +37,7 @@ Run prediction using CAKE compression (use `Llama3.1-8b-128k` as an example):
 ```
 python experiments/LongBench/pred_cake.py \
     --model llama3.1-8b-128k \
-    --e --compress --cascading \
+    --compress --cascading \
     --pred_name pred_result --device 0 \ 
     --cache_size 1024 \
     --window_size 32
@@ -48,7 +48,7 @@ Run evaluation:
 python experiments/LongBench/eval.py \
     --model llama3.1-8b-128k \
     --cache_size 1024 \
-    --eval_avg --e \
+    --eval_avg  \
     --dir_path pred_result
 ```
 
