@@ -71,3 +71,6 @@ year={2025},
 url={https://openreview.net/forum?id=EQgEMAD4kv}
 }
 ```
+
+# Acknowledgement
+We would like to express our sincere appreciation to [SnapKV](https://github.com/FasterDecoding/SnapKV) for their invaluable open-source contributions, which have substantially accelerated the progress and development of this project.
