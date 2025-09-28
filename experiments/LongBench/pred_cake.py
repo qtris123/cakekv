@@ -144,7 +144,7 @@ def load_model_and_tokenizer(path, model_name, device, compress_config):
     tokenizer = AutoTokenizer.from_pretrained(path)
     model = AutoModelForCausalLM.from_pretrained(
         path, torch_dtype=dtype,
-        attn_implementation="flash_attention_2"
+        attn_implementation="eager"    #"flash_attention_2"
     ).to(device)
     config = AutoConfig.from_pretrained(path)
     if hasattr(config, 'num_hidden_layers'):
@@ -222,7 +222,7 @@ if __name__== '__main__':
     
     for dataset in datasets:
         #load offline 
-        data_file = f"data/{name}.jsonl"
+        data_file = f"data/{dataset}.jsonl"
         data = load_dataset("json", data_files = {"test": data_file})["test"]
         # data_files = {"test": f"{dataset}.jsonl"}
         # data = load_dataset("json", data_dir='./datasets/longbench/data', split='test', data_files=data_files)
