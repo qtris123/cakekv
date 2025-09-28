@@ -190,7 +190,7 @@ if __name__== '__main__':
         compress_config.cache_size = args.cache_size
         compress_config.window_size = args.window_size
         cache_name = f"cache{args.cache_size}"
-        model2tau = json.load(open("config/model2tau.json", "r"))
+        model2tau = json.load(open("experiments/LongBench/config/model2tau.json", "r"))
         try:
             tau1 = model2tau[model_name][f"{args.cache_size}"]["tau1"]
             tau2 = model2tau[model_name][f"{args.cache_size}"]["tau2"]
