@@ -182,8 +182,8 @@ if __name__ == '__main__':
     compress = args.compress
     cascading = args.cascading
     compress_config = CompressConfig(compress, cascading)
-    model2path = json.load(open("config/model2path.json", "r"))
-    model2maxlen = json.load(open("config/model2maxlen.json", "r"))
+    model2path = json.load(open("experiments/LongBench/config/model2path.json", "r"))
+    model2maxlen = json.load(open("experiments/LongBench/config/model2maxlen.json", "r"))
     # define your model
     max_length = model2maxlen[model_name]
     if compress:
@@ -214,8 +214,8 @@ if __name__ == '__main__':
                 
 
     # we design specific prompt format and max generation length for each task, feel free to modify them to optimize model output
-    dataset2prompt = json.load(open("config/dataset2prompt.json", "r"))
-    dataset2maxlen = json.load(open("config/dataset2maxlen.json", "r"))
+    dataset2prompt = json.load(open("experiments/LongBench/config/dataset2prompt.json", "r"))
+    dataset2maxlen = json.load(open("experiments/LongBench/config/dataset2maxlen.json", "r"))
     # predict on each dataset
     if not os.path.exists(f"./pred_result/{cache_name}/{pred_name}"):
         os.makedirs(f"./pred_result/{cache_name}/{pred_name}")
