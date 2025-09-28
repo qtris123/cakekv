@@ -21,7 +21,8 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent.parent
 sys.path.append(str(project_root))
 
-from experiments.LongBench.pred_cake_attention_analysis import main as run_attention_collection
+import subprocess
+import sys
 from experiments.LongBench.visualize_attention import AttentionVisualizer
 from experiments.LongBench.attention_analysis_utils import AttentionAnalyzer
 
@@ -74,6 +75,7 @@ def run_attention_data_collection(args):
     
     # Set up arguments for the attention collection script
     collection_args = [
+        'python', 'pred_cake_attention_analysis.py',
         '--model', args.model,
         '--max_samples', str(args.max_samples),
         '--dataset', args.dataset,
@@ -92,9 +94,21 @@ def run_attention_data_collection(args):
             '--gamma', str(args.gamma)
         ])
     
-    # Run the collection script
-    sys.argv = ['pred_cake_attention_analysis.py'] + collection_args
-    run_attention_collection()
+    # Run the collection script as a subprocess
+    try:
+        result = subprocess.run(collection_args, 
+                              cwd=Path(__file__).parent,
+                              capture_output=True, 
+                              text=True, 
+                              check=True)
+        print("Data collection completed successfully!")
+        if result.stdout:
+            print("Output:", result.stdout)
+    except subprocess.CalledProcessError as e:
+        print(f"Error running data collection: {e}")
+        if e.stderr:
+            print("Error output:", e.stderr)
+        raise
 
 def run_attention_analysis(args):
     """Run the attention analysis"""
