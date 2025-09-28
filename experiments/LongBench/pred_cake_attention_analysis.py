@@ -45,6 +45,7 @@ def parse_args(args=None):
     parser.add_argument('--compress', action='store_true', help="Comrpess kv cache with CAKE")
     parser.add_argument('--cascading', action='store_true', help="Using cascading cache mangement")
     parser.add_argument('--pred_name', type=str, default="pred", help="Pred Output Name")
+    parser.add_argument('--dataset', type=str, default="narrativeqa", help="Choose which data to proceed")
     parser.add_argument('--device', type=int, default=0)
     parser.add_argument('--cache_size', type=int, default=1024)
     parser.add_argument('--window_size', type=int, default=32)
