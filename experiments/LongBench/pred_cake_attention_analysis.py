@@ -261,6 +261,7 @@ if __name__== '__main__':
     model_name = args.model
     compress = args.compress
     cascading = args.cascading
+    dataset = args.dataset
     compress_config = CompressConfig(compress, cascading)
     model2path = json.load(open("experiments/LongBench/config/model2path.json", "r"))
     model2maxlen = json.load(open("experiments/LongBench/config/model2maxlen.json", "r"))
@@ -288,9 +289,9 @@ if __name__== '__main__':
 
     model, tokenizer = load_model_and_tokenizer(model2path[model_name], model_name, device, compress_config)
 
-    datasets = ["narrativeqa", "qasper", "multifieldqa_en",  "hotpotqa", "2wikimqa", "musique", \
-                    "gov_report", "qmsum", "multi_news", "trec", "triviaqa", "samsum", \
-                "passage_count", "passage_retrieval_en", "lcc", "repobench-p"]
+    # datasets = ["narrativeqa", "qasper", "multifieldqa_en",  "hotpotqa", "2wikimqa", "musique", \
+    #                 "gov_report", "qmsum", "multi_news", "trec", "triviaqa", "samsum", \
+    #             "passage_count", "passage_retrieval_en", "lcc", "repobench-p"]
                 
 
     # we design specific prompt format and max generation length for each task, feel free to modify them to optimize model output
@@ -300,31 +301,31 @@ if __name__== '__main__':
     if not os.path.exists(f"./pred_result/{cache_name}/{pred_name}"):
         os.makedirs(f"./pred_result/{cache_name}/{pred_name}")
     
-    for dataset in datasets:
-        #load offline 
-        data_file = f"data/{dataset}.jsonl"
-        data = load_dataset("json", data_files = {"test": data_file})["test"]
-        # data_files = {"test": f"{dataset}.jsonl"}
-        # data = load_dataset("json", data_dir='./datasets/longbench/data', split='test', data_files=data_files)
+    # for dataset in datasets:
+    #load offline 
+    data_file = f"data/{dataset}.jsonl"
+    data = load_dataset("json", data_files = {"test": data_file})["test"]
+    # data_files = {"test": f"{dataset}.jsonl"}
+    # data = load_dataset("json", data_dir='./datasets/longbench/data', split='test', data_files=data_files)
 
-        if not os.path.exists(f"./pred_result/{cache_name}/{pred_name}/{model_name}"):
-            os.makedirs(f"./pred_result/{cache_name}/{pred_name}/{model_name}")
-        out_path = f"./pred_result/{cache_name}/{pred_name}/{model_name}/{dataset}.jsonl"
-    
-        prompt_format = dataset2prompt[dataset]
-        max_gen = dataset2maxlen[dataset]
-        data_all = [data_sample for data_sample in data]
+    if not os.path.exists(f"./pred_result/{cache_name}/{pred_name}/{model_name}"):
+        os.makedirs(f"./pred_result/{cache_name}/{pred_name}/{model_name}")
+    out_path = f"./pred_result/{cache_name}/{pred_name}/{model_name}/{dataset}.jsonl"
 
-        if os.path.exists(out_path):
-            with open(out_path, 'r', encoding='utf-8') as file:
-                lines = file.readlines()
-            
-            if len(data_all) == len(lines):
-                continue
-            else:
-                data_all=data_all[len(lines):]
+    prompt_format = dataset2prompt[dataset]
+    max_gen = dataset2maxlen[dataset]
+    data_all = [data_sample for data_sample in data]
 
-        get_pred_with_attention_analysis(model, tokenizer, compress, data_all, max_length, \
-                                    max_gen, prompt_format, dataset, model_name, model2path, out_path,
-                                    save_attention=args.save_attention, max_samples=args.max_samples, 
-                                    output_dir=args.output_dir)
+    if os.path.exists(out_path):
+        with open(out_path, 'r', encoding='utf-8') as file:
+            lines = file.readlines()
+        
+        if len(data_all) == len(lines):
+            continue
+        else:
+            data_all=data_all[len(lines):]
+
+    get_pred_with_attention_analysis(model, tokenizer, compress, data_all, max_length, \
+                                max_gen, prompt_format, dataset, model_name, model2path, out_path,
+                                save_attention=args.save_attention, max_samples=args.max_samples, 
+                                output_dir=args.output_dir)
