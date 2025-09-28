@@ -174,7 +174,7 @@ def load_model_and_tokenizer(path, model_name, device, compress_config):
     
     return model, tokenizer
 
-if __name__ == '__main__':
+if __name__== '__main__':
     seed_everything(42)
     args = parse_args()
     pred_name = args.pred_name
@@ -222,8 +222,10 @@ if __name__ == '__main__':
     
     for dataset in datasets:
         #load offline 
-        data_files = {"test": f"{dataset}.jsonl"}
-        data = load_dataset("json", data_dir='./datasets/longbench/data', split='test', data_files=data_files)
+        data_file = f"data/{name}.jsonl"
+        data = load_dataset("json", data_files = {"test": data_file})["test"]
+        # data_files = {"test": f"{dataset}.jsonl"}
+        # data = load_dataset("json", data_dir='./datasets/longbench/data', split='test', data_files=data_files)
 
         if not os.path.exists(f"./pred_result/{cache_name}/{pred_name}/{model_name}"):
             os.makedirs(f"./pred_result/{cache_name}/{pred_name}/{model_name}")
