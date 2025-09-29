@@ -357,7 +357,12 @@ def run_inference_with_attention_capture(
 
         clear_attention_storage()
 
-        prompt = (json_obj.get("context", "") + "\n" + json_obj.get("question", "")).strip()
+        pprompt = (
+                f"{json_obj.get('context', '')}\n\n"
+                "Given the context above, concisely answer the following question in 10 to 15 words.\n"
+                "Do not include any further reasoning or explanation.\n\n"
+                f"Question: {json_obj.get('question', '')}"
+            ).strip()
 
         # Tokenize once to enforce max_length robustly
         ids = tokenizer(prompt, return_tensors="pt", add_special_tokens=True).input_ids[0]
