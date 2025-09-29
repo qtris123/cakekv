@@ -442,7 +442,7 @@ if __name__ == '__main__':
     data_file = "data/narrativeqa.jsonl"
     if os.path.exists(data_file):
         with open(data_file, 'r', encoding='utf-8') as f:
-            data = [json.loads(line) for line in f.readlines()[:5]]
+            data = [json.loads(line) for line in f.readlines()]
     else:
         raise FileNotFoundError("cannot find narrativeqa")
         data = [
