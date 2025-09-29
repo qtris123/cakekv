@@ -75,7 +75,7 @@ def run_attention_data_collection(args):
     
     # Set up arguments for the attention collection script
     collection_args = [
-        'python', 'pred_cake_attention_analysis.py',
+        'python', 'experiments/LongBench/pred_cake_attention_analysis.py',
         '--model', args.model,
         '--max_samples', str(args.max_samples),
         '--dataset', args.dataset,
@@ -97,7 +97,7 @@ def run_attention_data_collection(args):
     # Run the collection script as a subprocess
     try:
         result = subprocess.run(collection_args, 
-                              cwd=Path(__file__).parent,
+                              cwd=Path(__file__).parent.parent.parent,
                               capture_output=True, 
                               text=True, 
                               check=True)

@@ -3,6 +3,7 @@ pyproject.toml
 cake/__init__.py
 cake/cake_cache.py
 cake/monkeypatch.py
+cake/monkeypatch_attention_analysis.py
 cake/utils.py
 cake.egg-info/PKG-INFO
 cake.egg-info/SOURCES.txt
@@ -10,8 +11,13 @@ cake.egg-info/dependency_links.txt
 cake.egg-info/requires.txt
 cake.egg-info/top_level.txt
 cake/model/modify_llama.py
+cake/model/modify_llama_attention_analysis.py
 cake/model/modify_mistral.py
 cake/model/modify_qwen2.py
+experiments/LongBench/attention_analysis_utils.py
 experiments/LongBench/eval.py
 experiments/LongBench/metrics.py
 experiments/LongBench/pred_cake.py
+experiments/LongBench/pred_cake_attention_analysis.py
+experiments/LongBench/run_attention_analysis.py
+experiments/LongBench/visualize_attention.py

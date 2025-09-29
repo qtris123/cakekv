@@ -313,17 +313,19 @@ if __name__== '__main__':
         os.makedirs(f"./pred_result/{cache_name}/{pred_name}/{model_name}")
     out_path = f"./pred_result/{cache_name}/{pred_name}/{model_name}/{dataset}.jsonl"
 
+    if not os.path.exist(data_file)
+
     prompt_format = dataset2prompt[dataset]
     max_gen = dataset2maxlen[dataset]
     data_all = [data_sample for data_sample in data]
 
     if os.path.exists(out_path):
-        with open(out_path, 'r', encoding='utf-8') as file:
-            lines = file.readlines()
-        
-        # if len(data_all) == len(lines):
-        # else:
-        data_all=data_all[len(lines):]
+      with open(out_path, 'r', encoding='utf-8') as file:
+          lines = file.readlines()
+      
+      # if len(data_all) == len(lines):
+      # else:
+      data_all=data_all[len(lines):]
 
     get_pred_with_attention_analysis(model, tokenizer, compress, data_all, max_length, \
                                 max_gen, prompt_format, dataset, model_name, model2path, out_path,
