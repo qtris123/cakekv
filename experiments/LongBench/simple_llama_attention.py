@@ -1,53 +1,106 @@
 import os
-from datasets import load_dataset
-import torch
 import json
-from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig
-from tqdm import tqdm
+import torch
 import numpy as np
 import random
 import argparse
 import pickle
 from pathlib import Path
+from tqdm import tqdm
+from transformers import AutoTokenizer, AutoModelForCausalLM
 
-# Global storage for attention scores
+# -----------------------------
+# Attention logging utilities
+# -----------------------------
+
+# attention_storage: dict[int -> list[dict]]
+# Each entry: {"step": int, "stage": "prefill"|"decode", "shape": [H, S] or [H, Q, S], "tensor": np.ndarray}
 attention_storage = {}
 
-def store_attention(layer_idx, attention_weights):
-    """Store attention weights for a specific layer"""
-    if attention_weights is not None:
-        # Store attention weights on CPU to save GPU memory
-        attention_storage[layer_idx] = attention_weights.detach().cpu()
-
 def clear_attention_storage():
-    """Clear the attention storage"""
-    global attention_storage
-    attention_storage = {}
+    attention_storage.clear()
 
-def save_attention_data(sample_idx, output_dir):
-    """Save attention data to file"""
+def _ensure_layer_list(layer_idx: int):
+    if layer_idx not in attention_storage:
+        attention_storage[layer_idx] = []
+
+def _to_cpu_numpy(t: torch.Tensor):
+    return t.detach().to("cpu").numpy()
+
+def log_prefill_attentions(attentions, prefill_capture: str, ctx_len: int):
+    """
+    attentions: list of length L, each tensor [B, H, Q, S] for prefill forward
+    prefill_capture: "last" | "all" | "none"
+    ctx_len: total prompt length (tokens)
+    """
+    if prefill_capture == "none" or attentions is None:
+        return
+
+    # For profiling we assume B==1
+    for layer_idx, a in enumerate(attentions):
+        # a: [B, H, Q, S]
+        if a is None:
+            continue
+        a = a.squeeze(0)  # [H, Q, S]
+        if prefill_capture == "last":
+            # store only the last query row => [H, 1, S] -> squeeze to [H, S]
+            last = a[:, -1:, :]           # [H, 1, S]
+            last = last.squeeze(1)        # [H, S]
+            _ensure_layer_list(layer_idx)
+            attention_storage[layer_idx].append({
+                "step": int(ctx_len - 1),           # the last prefill position
+                "stage": "prefill",
+                "shape": [int(last.shape[0]), int(last.shape[1])],
+                "tensor": _to_cpu_numpy(last),
+            })
+        elif prefill_capture == "all":
+            # WARNING: heavy O(T^2). Store as [H, Q, S]
+            _ensure_layer_list(layer_idx)
+            attention_storage[layer_idx].append({
+                "step": int(ctx_len - 1),           # you can mark this batch with the last index
+                "stage": "prefill_all",
+                "shape": [int(a.shape[0]), int(a.shape[1]), int(a.shape[2])],
+                "tensor": _to_cpu_numpy(a),
+            })
+
+def log_decode_attentions(attentions, step_idx: int):
+    """
+    attentions: list of length L, each tensor [B, H, 1, S] during incremental decode
+    Stores [H, S] per layer for this decode step.
+    """
+    if attentions is None:
+        return
+    for layer_idx, a in enumerate(attentions):
+        if a is None:
+            continue
+        # a: [B, H, 1, S] -> [H, S]
+        a = a.squeeze(0).squeeze(1)  # [H, S]
+        _ensure_layer_list(layer_idx)
+        attention_storage[layer_idx].append({
+            "step": int(step_idx),
+            "stage": "decode",
+            "shape": [int(a.shape[0]), int(a.shape[1])],
+            "tensor": _to_cpu_numpy(a),
+        })
+
+def save_attention_data(sample_idx: int, output_dir: str):
     os.makedirs(output_dir, exist_ok=True)
-    
-    # Convert tensors to numpy for saving
-    data_to_save = {}
-    for layer_idx, attention_weights in attention_storage.items():
-        data_to_save[layer_idx] = {
-            'shape': list(attention_weights.shape),
-            'tensor': attention_weights.numpy()
-        }
-    
-    # Save as pickle
-    with open(f"{output_dir}/attention_sample_{sample_idx}.pkl", 'wb') as f:
-        pickle.dump(data_to_save, f)
-    
-    print(f"Saved attention data for sample {sample_idx} with {len(data_to_save)} layers")
+    out_path = os.path.join(output_dir, f"attention_sample_{sample_idx}.pkl")
+    with open(out_path, "wb") as f:
+        pickle.dump(attention_storage, f)
+    print(f"Saved attention data for sample {sample_idx} "
+          f"(layers logged: {len(attention_storage)}) -> {out_path}")
+
+# -----------------------------
+# Args & helpers
+# -----------------------------
 
 def parse_args(args=None):
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model', type=str, default="llama3.1-8b-128k", 
-                        choices=["llama2-7b-chat-4k", 
-                                 "llama2-13b-chat-4k", 
-                                 "llama3.1-8b-128k", 
+    parser.add_argument('--model', type=str, default="llama3.1-8b-128k",
+                        choices=["llama2-7b-chat-4k",
+                                 "llama2-13b-chat-4k",
+                                 "llama3.1-8b-128k",
                                  "mistral-0.3-7b-32k",
                                  "qwen2.5-7b-instruct"])
     parser.add_argument('--device', type=int, default=0)
@@ -56,16 +109,20 @@ def parse_args(args=None):
     parser.add_argument('--max_length', type=int, default=2048, help="Maximum input length")
     parser.add_argument('--max_new_tokens', type=int, default=50, help="Maximum new tokens to generate")
     parser.add_argument('--output_dir', type=str, default="./attention_data", help="Output directory")
+    # New capture controls
+    parser.add_argument('--prefill_capture', type=str, default="last", choices=["last", "all", "none"],
+                        help="How to log attentions during prefill")
+    parser.add_argument('--log_every', type=int, default=1,
+                        help="Log decode attentions every N steps")
     return parser.parse_args(args)
 
 def build_chat(tokenizer, prompt, model_name):
-    """Build chat prompt format"""
     if "llama3" in model_name:
         prompt = f"<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n\n{prompt}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
     elif "llama2" in model_name:
         prompt = f"[INST]{prompt}[/INST]"
     elif "mistral" in model_name:
-        prompt = f'<s>[INST] {prompt} [/INST]'
+        prompt = f"<s>[INST] {prompt} [/INST]"
     elif "qwen" in model_name:
         messages = [
             {"role": "system", "content": "You are Qwen, created by Alibaba Cloud. You are a helpful assistant."},
@@ -78,57 +135,6 @@ def build_chat(tokenizer, prompt, model_name):
         )
     return prompt
 
-@torch.inference_mode()
-def run_inference_with_attention_capture(model, tokenizer, data, max_length, max_new_tokens, model_name, save_attention=False, max_samples=1, output_dir="./attention_data"):
-    
-    sample_count = 0
-    
-    for json_obj in tqdm(data):
-        if sample_count >= max_samples:
-            break
-            
-        # Clear attention storage for this sample
-        clear_attention_storage()
-        
-        prompt = json_obj.get("context", "") + "\n" + json_obj.get("question", "")
-        
-        # Truncate to fit max_length
-        tokenized_prompt = tokenizer(prompt, truncation=False, return_tensors="pt").input_ids[0]
-        if len(tokenized_prompt) > max_length:
-            half = int(max_length/2)
-            prompt = tokenizer.decode(tokenized_prompt[:half], skip_special_tokens=True) + tokenizer.decode(tokenized_prompt[-half:], skip_special_tokens=True)
-        
-        # Build chat format
-        if "llama" in model_name or "mistral" in model_name or "qwen" in model_name:
-            prompt = build_chat(tokenizer, prompt, model_name)
-
-        input_ids = tokenizer(prompt, truncation=False, return_tensors="pt").to(device)
-        context_length = input_ids.input_ids.shape[-1]
-
-        print(f"Processing sample {sample_count}, input length: {context_length}")
-        
-        # Generate with attention capture
-        output = model.generate(
-            **input_ids,
-            max_new_tokens=max_new_tokens,
-            num_beams=1,
-            do_sample=False,
-            temperature=1.0,
-            output_attentions=True,  # This enables attention output
-        )
-
-        # Get the generated text
-        generated_ids = output[0][context_length:]
-        generated_text = tokenizer.decode(generated_ids, skip_special_tokens=True)
-        
-        print(f"Generated: {generated_text[:100]}...")
-        
-        # Save attention data if requested
-        if save_attention:
-            save_attention_data(sample_count, output_dir)
-        
-        sample_count += 1
-
 def seed_everything(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
@@ -138,72 +144,130 @@ def seed_everything(seed):
     torch.backends.cudnn.deterministic = True
     torch.cuda.manual_seed_all(seed)
 
-def load_model_with_attention_modification(path, model_name, device):
-    """Load model and modify attention to capture weights"""
-    
-    # Load tokenizer
+# -----------------------------
+# Model loading (no patching)
+# -----------------------------
+
+def load_model_eager(path, model_name, device):
     tokenizer = AutoTokenizer.from_pretrained(path)
-    
-    # Load model
-    dtype = torch.float16 if "qwen2" not in model_name else torch.bfloat16
+    # Qwen often prefers bf16; others fp16 is fine for inference
+    dtype = torch.bfloat16 if "qwen2" in model_name else torch.float16
     model = AutoModelForCausalLM.from_pretrained(
-        path, 
+        path,
         torch_dtype=dtype,
-        attn_implementation="eager",  # Use eager attention to get weights
+        attn_implementation="eager",  # critical for returning attentions
+        device_map=None
     ).to(device)
-    
-    # Modify attention forward to capture weights
-    def attention_forward_with_capture(self, hidden_states, attention_mask=None, position_ids=None, past_key_value=None, output_attentions=True, use_cache=False, **kwargs):
-        """Modified attention forward that captures attention weights"""
-        
-        # Standard attention computation
-        bsz, q_len, _ = hidden_states.size()
-        
-        query_states = self.q_proj(hidden_states)
-        key_states = self.k_proj(hidden_states)
-        value_states = self.v_proj(hidden_states)
-
-        query_states = query_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
-        key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
-        value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
-        
-        # Rotary positional embeddings
-        cos, sin = self.rotary_emb(value_states, position_ids)
-        from transformers.models.llama.modeling_llama import apply_rotary_pos_emb
-        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
-
-        # Repeat k/v heads if necessary
-        key_states = key_states.repeat_interleave(self.num_key_value_groups, dim=1)
-        value_states = value_states.repeat_interleave(self.num_key_value_groups, dim=1)
-
-        # Compute attention scores
-        attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / np.sqrt(self.head_dim)
-
-        if attention_mask is not None:
-            attn_weights = attn_weights + attention_mask
-
-        attn_weights = torch.nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
-        
-        # STORE ATTENTION WEIGHTS
-        store_attention(getattr(self, 'layer_idx', 0), attn_weights)
-
-        # Compute output
-        attn_output = torch.matmul(attn_weights, value_states)
-        attn_output = attn_output.transpose(1, 2).contiguous()
-        attn_output = attn_output.reshape(bsz, q_len, -1)
-        attn_output = self.o_proj(attn_output)
-
-        return attn_output, attn_weights, past_key_value
-
-    # Replace attention forward for all layers
-    for i, layer in enumerate(model.model.layers):
-        # Add layer index attribute
-        layer.self_attn.layer_idx = i
-        # Replace the forward method
-        layer.self_attn.forward = attention_forward_with_capture.__get__(layer.self_attn, layer.self_attn.__class__)
-    
-    model = model.eval()
+    model.config.output_attentions = True
+    model.eval()
     return model, tokenizer
+
+# -----------------------------
+# Inference with attention capture (prefill + decode)
+# -----------------------------
+
+@torch.inference_mode()
+def step_decode_and_capture(model, input_ids, max_new_tokens, log_every, prefill_capture):
+    """
+    Prefill once with output_attentions=True, log per-layer attentions as configured.
+    Then decode token-by-token, logging per-layer attentions every `log_every` steps.
+    Returns generated token ids (without the prompt).
+    """
+    device = next(model.parameters()).device
+    input_ids = input_ids.to(device)
+
+    # PREFILL
+    out = model(input_ids=input_ids, use_cache=True, output_attentions=True, return_dict=True)
+    past_key_values = out.past_key_values
+    logits = out.logits[:, -1, :]
+
+    ctx_len = input_ids.shape[-1]
+    # attentions in prefill: list[L] of [B, H, Q, S] where Q == ctx_len
+    log_prefill_attentions(out.attentions, prefill_capture=prefill_capture, ctx_len=ctx_len)
+
+    # DECODE
+    generated = []
+    for t in range(max_new_tokens):
+        # greedy; switch to sampling if you want
+        next_token = torch.argmax(logits, dim=-1)  # [B]
+        generated.append(next_token)
+
+        out = model(input_ids=next_token.unsqueeze(-1),
+                    use_cache=True,
+                    past_key_values=past_key_values,
+                    output_attentions=True,
+                    return_dict=True)
+        past_key_values = out.past_key_values
+        logits = out.logits[:, -1, :]
+
+        if (t % max(1, log_every)) == 0:
+            # attentions in decode: list[L] of [B, H, 1, S]
+            # step index is absolute position in sequence
+            abs_step = ctx_len + t
+            log_decode_attentions(out.attentions, step_idx=abs_step)
+
+    if generated:
+        return torch.stack(generated, dim=1)  # [B, T_new]
+    return torch.empty((input_ids.shape[0], 0), dtype=torch.long, device=device)
+
+@torch.inference_mode()
+def run_inference_with_attention_capture(
+    model, tokenizer, data, max_length, max_new_tokens, model_name,
+    save_attention=False, max_samples=1, output_dir="./attention_data",
+    prefill_capture="last", log_every=1, device=None
+):
+    sample_count = 0
+
+    print(len(data))
+    for json_obj in tqdm(data):
+        if sample_count >= max_samples:
+            break
+
+        clear_attention_storage()
+
+        prompt = (json_obj.get("context", "") + "\n" + json_obj.get("question", "")).strip()
+
+        # Tokenize once to enforce max_length robustly
+        ids = tokenizer(prompt, return_tensors="pt", add_special_tokens=True).input_ids[0]
+        if ids.numel() > max_length:
+            # keep tail for decoder-only models
+            ids = ids[-max_length:]
+
+        # Apply chat template AFTER truncation
+        if any(k in model_name for k in ["llama", "mistral", "qwen"]):
+            prompt = build_chat(tokenizer, tokenizer.decode(ids, skip_special_tokens=True), model_name)
+
+        enc = tokenizer(prompt, return_tensors="pt")
+        input_ids = enc.input_ids.to(device)
+        context_length = input_ids.shape[-1]
+        print(f"Processing sample {sample_count}, input length: {context_length}")
+
+        # Manual decode with attention capture
+        gen_ids = step_decode_and_capture(
+            model,
+            input_ids,
+            max_new_tokens=max_new_tokens,
+            log_every=log_every,
+            prefill_capture=prefill_capture
+        )
+
+        generated_text = tokenizer.decode(gen_ids[0], skip_special_tokens=True) if gen_ids.numel() else ""
+        
+        os.makedirs("output_data", exist_ok=True)
+        pred_path = os.path.join("output_data", f"output_sample_{sample_count}.json")
+        full_dict = {"prompt" : prompt, "output": generated_text}
+        with open(pred_path, "w") as f:
+            json.dump(full_dict, f)
+        print(f"Generated: {generated_text[:100]}...")
+
+        if save_attention:
+            save_attention_data(sample_count, output_dir)
+
+        sample_count += 1
+
+# -----------------------------
+# Main
+# -----------------------------
 
 if __name__ == '__main__':
     seed_everything(42)
@@ -214,40 +278,354 @@ if __name__ == '__main__':
     print(f"Loading model: {model_name}")
     print(f"Using device: {device}")
 
-    # Model paths
+    # Map friendly name -> HF hub id
     model2path = {
         "llama2-7b-chat-4k": "meta-llama/Llama-2-7b-chat-hf",
-        "llama2-13b-chat-4k": "meta-llama/Llama-2-13b-chat-hf", 
+        "llama2-13b-chat-4k": "meta-llama/Llama-2-13b-chat-hf",
         "llama3.1-8b-128k": "meta-llama/Meta-Llama-3.1-8B-Instruct",
         "mistral-0.3-7b-32k": "mistralai/Mistral-7B-Instruct-v0.3",
-        "qwen2.5-7b-instruct": "Qwen/Qwen2.5-7B-Instruct"
+        "qwen2.5-7b-instruct": "Qwen/Qwen2.5-7B-Instruct",
     }
-    
     model_path = model2path.get(model_name, model_name)
-    
-    # Load model with attention modification
-    model, tokenizer = load_model_with_attention_modification(model_path, model_name, device)
+
+    # Load model without patching kernels
+    model, tokenizer = load_model_eager(model_path, model_name, device)
 
     # Load test data
     print("Loading test data...")
     data_file = "data/narrativeqa.jsonl"
     if os.path.exists(data_file):
-        with open(data_file, 'r') as f:
-            data = [json.loads(line) for line in f.readlines()[:5]]  # Load first 5 samples
+        with open(data_file, 'r', encoding='utf-8') as f:
+            data = [json.loads(line) for line in f.readlines()[:5]]
     else:
-        # Create dummy data for testing
+        raise FileNotFoundError("cannot find narrativeqa")
         data = [
             {"context": "This is a test context. " * 100, "question": "What is this about?"},
             {"context": "Another test context. " * 80, "question": "What is the main topic?"},
         ]
-    
-    # Run inference
+
+    # Run
     run_inference_with_attention_capture(
-        model, tokenizer, data, 
+        model, tokenizer, data,
         args.max_length, args.max_new_tokens, model_name,
-        save_attention=args.save_attention, 
-        max_samples=args.max_samples, 
-        output_dir=args.output_dir
+        save_attention=args.save_attention,
+        max_samples=args.max_samples,
+        output_dir=args.output_dir,
+        prefill_capture=args.prefill_capture,
+        log_every=args.log_every,
+        device=device
     )
-    
+
     print("Done!")
+
+# import os
+# import json
+# import torch
+# import numpy as np
+# import random
+# import argparse
+# import pickle
+# from pathlib import Path
+# from tqdm import tqdm
+# from transformers import AutoTokenizer, AutoModelForCausalLM
+
+# # -----------------------------
+# # Attention logging utilities
+# # -----------------------------
+
+# # attention_storage: dict[int -> list[dict]]
+# # Each entry: {"step": int, "stage": "prefill"|"decode", "shape": [H, S] or [H, Q, S], "tensor": np.ndarray}
+# attention_storage = {}
+
+# def clear_attention_storage():
+#     attention_storage.clear()
+
+# def _ensure_layer_list(layer_idx: int):
+#     if layer_idx not in attention_storage:
+#         attention_storage[layer_idx] = []
+
+# def _to_cpu_numpy(t: torch.Tensor):
+#     return t.detach().to("cpu").numpy()
+
+# def log_prefill_attentions(attentions, prefill_capture: str, ctx_len: int):
+#     """
+#     attentions: list of length L, each tensor [B, H, Q, S] for prefill forward
+#     prefill_capture: "last" | "all" | "none"
+#     ctx_len: total prompt length (tokens)
+#     """
+#     if prefill_capture == "none" or attentions is None:
+#         return
+
+#     # For profiling we assume B==1
+#     for layer_idx, a in enumerate(attentions):
+#         # a: [B, H, Q, S]
+#         if a is None:
+#             continue
+#         a = a.squeeze(0)  # [H, Q, S]
+#         if prefill_capture == "last":
+#             # store only the last query row => [H, 1, S] -> squeeze to [H, S]
+#             last = a[:, -1:, :]           # [H, 1, S]
+#             last = last.squeeze(1)        # [H, S]
+#             _ensure_layer_list(layer_idx)
+#             attention_storage[layer_idx].append({
+#                 "step": int(ctx_len - 1),           # the last prefill position
+#                 "stage": "prefill",
+#                 "shape": [int(last.shape[0]), int(last.shape[1])],
+#                 "tensor": _to_cpu_numpy(last),
+#             })
+#         elif prefill_capture == "all":
+#             # WARNING: heavy O(T^2). Store as [H, Q, S]
+#             _ensure_layer_list(layer_idx)
+#             attention_storage[layer_idx].append({
+#                 "step": int(ctx_len - 1),           # you can mark this batch with the last index
+#                 "stage": "prefill_all",
+#                 "shape": [int(a.shape[0]), int(a.shape[1]), int(a.shape[2])],
+#                 "tensor": _to_cpu_numpy(a),
+#             })
+
+# def log_decode_attentions(attentions, step_idx: int):
+#     """
+#     attentions: list of length L, each tensor [B, H, 1, S] during incremental decode
+#     Stores [H, S] per layer for this decode step.
+#     """
+#     if attentions is None:
+#         return
+#     for layer_idx, a in enumerate(attentions):
+#         if a is None:
+#             continue
+#         # a: [B, H, 1, S] -> [H, S]
+#         a = a.squeeze(0).squeeze(1)  # [H, S]
+#         _ensure_layer_list(layer_idx)
+#         attention_storage[layer_idx].append({
+#             "step": int(step_idx),
+#             "stage": "decode",
+#             "shape": [int(a.shape[0]), int(a.shape[1])],
+#             "tensor": _to_cpu_numpy(a),
+#         })
+
+# def save_attention_data(sample_idx: int, output_dir: str):
+#     os.makedirs(output_dir, exist_ok=True)
+#     out_path = os.path.join(output_dir, f"attention_sample_{sample_idx}.pkl")
+#     with open(out_path, "wb") as f:
+#         pickle.dump(attention_storage, f)
+#     print(f"Saved attention data for sample {sample_idx} "
+#           f"(layers logged: {len(attention_storage)}) -> {out_path}")
+
+# # -----------------------------
+# # Args & helpers
+# # -----------------------------
+
+# def parse_args(args=None):
+#     parser = argparse.ArgumentParser()
+#     parser.add_argument('--model', type=str, default="llama3.1-8b-128k",
+#                         choices=["llama2-7b-chat-4k",
+#                                  "llama2-13b-chat-4k",
+#                                  "llama3.1-8b-128k",
+#                                  "mistral-0.3-7b-32k",
+#                                  "qwen2.5-7b-instruct"])
+#     parser.add_argument('--device', type=int, default=0)
+#     parser.add_argument('--save_attention', action='store_true', help="Save attention scores")
+#     parser.add_argument('--max_samples', type=int, default=1, help="Maximum number of samples")
+#     parser.add_argument('--max_length', type=int, default=2048, help="Maximum input length")
+#     parser.add_argument('--max_new_tokens', type=int, default=50, help="Maximum new tokens to generate")
+#     parser.add_argument('--output_dir', type=str, default="./attention_data", help="Output directory")
+#     # New capture controls
+#     parser.add_argument('--prefill_capture', type=str, default="last", choices=["last", "all", "none"],
+#                         help="How to log attentions during prefill")
+#     parser.add_argument('--log_every', type=int, default=1,
+#                         help="Log decode attentions every N steps")
+#     return parser.parse_args(args)
+
+# def build_chat(tokenizer, prompt, model_name):
+#     if "llama3" in model_name:
+#         prompt = f"<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n\n{prompt}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
+#     elif "llama2" in model_name:
+#         prompt = f"[INST]{prompt}[/INST]"
+#     elif "mistral" in model_name:
+#         prompt = f"<s>[INST] {prompt} [/INST]"
+#     elif "qwen" in model_name:
+#         messages = [
+#             {"role": "system", "content": "You are Qwen, created by Alibaba Cloud. You are a helpful assistant."},
+#             {"role": "user", "content": prompt}
+#         ]
+#         prompt = tokenizer.apply_chat_template(
+#             messages,
+#             tokenize=False,
+#             add_generation_prompt=True
+#         )
+#     return prompt
+
+# def seed_everything(seed):
+#     torch.manual_seed(seed)
+#     torch.cuda.manual_seed(seed)
+#     np.random.seed(seed)
+#     random.seed(seed)
+#     torch.backends.cudnn.benchmark = False
+#     torch.backends.cudnn.deterministic = True
+#     torch.cuda.manual_seed_all(seed)
+
+# # -----------------------------
+# # Model loading (no patching)
+# # -----------------------------
+
+# def load_model_eager(path, model_name, device):
+#     tokenizer = AutoTokenizer.from_pretrained(path)
+#     # Qwen often prefers bf16; others fp16 is fine for inference
+#     dtype = torch.bfloat16 if "qwen2" in model_name else torch.float16
+#     model = AutoModelForCausalLM.from_pretrained(
+#         path,
+#         torch_dtype=dtype,
+#         attn_implementation="eager",  # critical for returning attentions
+#         device_map=None
+#     ).to(device)
+#     model.config.output_attentions = True
+#     model.eval()
+#     return model, tokenizer
+
+# # -----------------------------
+# # Inference with attention capture (prefill + decode)
+# # -----------------------------
+
+# @torch.inference_mode()
+# def step_decode_and_capture(model, input_ids, max_new_tokens, log_every, prefill_capture):
+#     """
+#     Prefill once with output_attentions=True, log per-layer attentions as configured.
+#     Then decode token-by-token, logging per-layer attentions every `log_every` steps.
+#     Returns generated token ids (without the prompt).
+#     """
+#     device = next(model.parameters()).device
+#     input_ids = input_ids.to(device)
+
+#     # PREFILL
+#     out = model(input_ids=input_ids, use_cache=True, output_attentions=True, return_dict=True)
+#     past_key_values = out.past_key_values
+#     logits = out.logits[:, -1, :]
+
+#     ctx_len = input_ids.shape[-1]
+#     # attentions in prefill: list[L] of [B, H, Q, S] where Q == ctx_len
+#     log_prefill_attentions(out.attentions, prefill_capture=prefill_capture, ctx_len=ctx_len)
+
+#     # DECODE
+#     generated = []
+#     for t in range(max_new_tokens):
+#         # greedy; switch to sampling if you want
+#         next_token = torch.argmax(logits, dim=-1)  # [B]
+#         generated.append(next_token)
+
+#         out = model(input_ids=next_token.unsqueeze(-1),
+#                     use_cache=True,
+#                     past_key_values=past_key_values,
+#                     output_attentions=True,
+#                     return_dict=True)
+#         past_key_values = out.past_key_values
+#         logits = out.logits[:, -1, :]
+
+#         if (t % max(1, log_every)) == 0:
+#             # attentions in decode: list[L] of [B, H, 1, S]
+#             # step index is absolute position in sequence
+#             abs_step = ctx_len + t
+#             log_decode_attentions(out.attentions, step_idx=abs_step)
+
+#     if generated:
+#         return torch.stack(generated, dim=1)  # [B, T_new]
+#     return torch.empty((input_ids.shape[0], 0), dtype=torch.long, device=device)
+
+# @torch.inference_mode()
+# def run_inference_with_attention_capture(
+#     model, tokenizer, data, max_length, max_new_tokens, model_name,
+#     save_attention=False, max_samples=1, output_dir="./attention_data",
+#     prefill_capture="last", log_every=1, device=None
+# ):
+#     sample_count = 0
+
+#     for json_obj in tqdm(data):
+#         if sample_count >= max_samples:
+#             break
+
+#         clear_attention_storage()
+
+#         prompt = (json_obj.get("context", "") + "\n" + json_obj.get("question", "")).strip()
+
+#         # Tokenize once to enforce max_length robustly
+#         ids = tokenizer(prompt, return_tensors="pt", add_special_tokens=True).input_ids[0]
+#         if ids.numel() > max_length:
+#             # keep tail for decoder-only models
+#             ids = ids[-max_length:]
+
+#         # Apply chat template AFTER truncation
+#         if any(k in model_name for k in ["llama", "mistral", "qwen"]):
+#             prompt = build_chat(tokenizer, tokenizer.decode(ids, skip_special_tokens=True), model_name)
+
+#         enc = tokenizer(prompt, return_tensors="pt")
+#         input_ids = enc.input_ids.to(device)
+#         context_length = input_ids.shape[-1]
+#         print(f"Processing sample {sample_count}, input length: {context_length}")
+
+#         # Manual decode with attention capture
+#         gen_ids = step_decode_and_capture(
+#             model,
+#             input_ids,
+#             max_new_tokens=max_new_tokens,
+#             log_every=log_every,
+#             prefill_capture=prefill_capture
+#         )
+
+#         generated_text = tokenizer.decode(gen_ids[0], skip_special_tokens=True) if gen_ids.numel() else ""
+#         print(f"Generated: {generated_text[:100]}...")
+
+#         if save_attention:
+#             save_attention_data(sample_count, output_dir)
+
+#         sample_count += 1
+
+# # -----------------------------
+# # Main
+# # -----------------------------
+
+# if __name__ == '__main__':
+#     seed_everything(42)
+#     args = parse_args()
+#     model_name = args.model
+#     device = torch.device(f'cuda:{args.device}' if torch.cuda.is_available() else 'cpu')
+
+#     print(f"Loading model: {model_name}")
+#     print(f"Using device: {device}")
+
+#     # Map friendly name -> HF hub id
+#     model2path = {
+#         "llama2-7b-chat-4k": "meta-llama/Llama-2-7b-chat-hf",
+#         "llama2-13b-chat-4k": "meta-llama/Llama-2-13b-chat-hf",
+#         "llama3.1-8b-128k": "meta-llama/Meta-Llama-3.1-8B-Instruct",
+#         "mistral-0.3-7b-32k": "mistralai/Mistral-7B-Instruct-v0.3",
+#         "qwen2.5-7b-instruct": "Qwen/Qwen2.5-7B-Instruct",
+#     }
+#     model_path = model2path.get(model_name, model_name)
+
+#     # Load model without patching kernels
+#     model, tokenizer = load_model_eager(model_path, model_name, device)
+
+#     # Load test data
+#     print("Loading test data...")
+#     data_file = "data/narrativeqa.jsonl"
+#     if os.path.exists(data_file):
+#         with open(data_file, 'r', encoding='utf-8') as f:
+#             data = [json.loads(line) for line in f.readlines()[:5]]
+#     else:
+#         data = [
+#             {"context": "This is a test context. " * 100, "question": "What is this about?"},
+#             {"context": "Another test context. " * 80, "question": "What is the main topic?"},
+#         ]
+
+#     # Run
+#     run_inference_with_attention_capture(
+#         model, tokenizer, data,
+#         args.max_length, args.max_new_tokens, model_name,
+#         save_attention=args.save_attention,
+#         max_samples=args.max_samples,
+#         output_dir=args.output_dir,
+#         prefill_capture=args.prefill_capture,
+#         log_every=args.log_every,
+#         device=device
+#     )
+
+#     print("Done!")
