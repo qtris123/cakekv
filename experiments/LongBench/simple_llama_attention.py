@@ -357,7 +357,7 @@ def run_inference_with_attention_capture(
 
         clear_attention_storage()
 
-        pprompt = (
+        prompt = (
                 f"{json_obj.get('context', '')}\n\n"
                 "Given the context above, concisely answer the following question in 10 to 15 words.\n"
                 "Do not include any further reasoning or explanation.\n\n"
