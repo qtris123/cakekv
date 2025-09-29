@@ -452,7 +452,7 @@ if __name__ == '__main__':
         save_attention=args.save_attention,
         max_samples=args.max_samples,
         output_dir=args.output_dir,
-        prefill_capture=args.prefill_capture,
+        prefill_capture="all",
         log_every=args.log_every,
         device=device
     )

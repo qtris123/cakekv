@@ -11,13 +11,11 @@ cake.egg-info/dependency_links.txt
 cake.egg-info/requires.txt
 cake.egg-info/top_level.txt
 cake/model/modify_llama.py
-cake/model/modify_llama_attention_analysis.py
 cake/model/modify_mistral.py
 cake/model/modify_qwen2.py
 experiments/LongBench/attention_analysis_utils.py
 experiments/LongBench/eval.py
 experiments/LongBench/metrics.py
 experiments/LongBench/pred_cake.py
-experiments/LongBench/pred_cake_attention_analysis.py
-experiments/LongBench/run_attention_analysis.py
-experiments/LongBench/visualize_attention.py
+experiments/LongBench/simple_llama_attention.py
+experiments/LongBench/simple_view_attention.py
