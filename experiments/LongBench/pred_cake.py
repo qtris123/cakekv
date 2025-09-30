@@ -67,7 +67,8 @@ def build_chat(tokenizer, prompt, model_name):
 @torch.inference_mode()
 def get_pred(model, tokenizer, compress, data, max_length, max_gen, prompt_format, dataset, model_name, model2path, out_path):
 
-    for json_obj in tqdm(data):
+    small_data = data[:20]
+    for json_obj in tqdm(small_data):
         prompt = prompt_format.format(**json_obj)
         # truncate to fit max_length (we suggest truncate in the middle, since the left and right side may contain crucial instructions)
         tokenized_prompt = tokenizer(prompt, truncation=False, return_tensors="pt").input_ids[0]
@@ -80,6 +81,7 @@ def get_pred(model, tokenizer, compress, data, max_length, max_gen, prompt_forma
 
         input = tokenizer(prompt, truncation=False, return_tensors="pt").to(device)
         context_length = input.input_ids.shape[-1]
+        eos_id = model.config.eos_token_id or tokenizer.eos_token_id
 
         if dataset == "samsum":
             output = model.generate(
@@ -94,6 +96,7 @@ def get_pred(model, tokenizer, compress, data, max_length, max_gen, prompt_forma
         else:
             output = model.generate(
                 **input,
+                eos_token_id = eos_id,
                 max_new_tokens=max_gen,
                 num_beams=1,
                 do_sample=False,
@@ -144,7 +147,7 @@ def load_model_and_tokenizer(path, model_name, device, compress_config):
     tokenizer = AutoTokenizer.from_pretrained(path)
     model = AutoModelForCausalLM.from_pretrained(
         path, torch_dtype=dtype,
-        attn_implementation="eager"    #"flash_attention_2"
+        attn_implementation="flash_attention_2"
     ).to(device)
     config = AutoConfig.from_pretrained(path)
     if hasattr(config, 'num_hidden_layers'):
@@ -220,29 +223,30 @@ if __name__== '__main__':
     if not os.path.exists(f"./pred_result/{cache_name}/{pred_name}"):
         os.makedirs(f"./pred_result/{cache_name}/{pred_name}")
     
-    for dataset in datasets:
-        #load offline 
-        data_file = f"data/{dataset}.jsonl"
-        data = load_dataset("json", data_files = {"test": data_file})["test"]
-        # data_files = {"test": f"{dataset}.jsonl"}
-        # data = load_dataset("json", data_dir='./datasets/longbench/data', split='test', data_files=data_files)
+    #for dataset in datasets:
+    #load offline 
+    dataset = datasets[0]
+    data_file = f"data/{dataset}.jsonl"
+    data = load_dataset("json", data_files = {"test": data_file})["test"]
+    # data_files = {"test": f"{dataset}.jsonl"}
+    # data = load_dataset("json", data_dir='./datasets/longbench/data', split='test', data_files=data_files)
 
-        if not os.path.exists(f"./pred_result/{cache_name}/{pred_name}/{model_name}"):
-            os.makedirs(f"./pred_result/{cache_name}/{pred_name}/{model_name}")
-        out_path = f"./pred_result/{cache_name}/{pred_name}/{model_name}/{dataset}.jsonl"
-    
-        prompt_format = dataset2prompt[dataset]
-        max_gen = dataset2maxlen[dataset]
-        data_all = [data_sample for data_sample in data]
+    if not os.path.exists(f"./pred_result/{cache_name}/{pred_name}/{model_name}"):
+        os.makedirs(f"./pred_result/{cache_name}/{pred_name}/{model_name}")
+    out_path = f"./pred_result/{cache_name}/{pred_name}/{model_name}/{dataset}.jsonl"
 
-        if os.path.exists(out_path):
-            with open(out_path, 'r', encoding='utf-8') as file:
-                lines = file.readlines()
-            
-            if len(data_all) == len(lines):
-                continue
-            else:
-                data_all=data_all[len(lines):]
+    prompt_format = dataset2prompt[dataset]
+    max_gen = dataset2maxlen[dataset]
+    data_all = [data_sample for data_sample in data]
 
-        get_pred(model, tokenizer, compress, data_all, max_length, \
-                                    max_gen, prompt_format, dataset, model_name, model2path, out_path)
+    if os.path.exists(out_path):
+        with open(out_path, 'r', encoding='utf-8') as file:
+            lines = file.readlines()
+        
+        # if len(data_all) == len(lines):
+        #     continue
+        # else:
+        data_all=data_all[len(lines):]
+
+    get_pred(model, tokenizer, compress, data_all, max_length, \
+                                max_gen, prompt_format, dataset, model_name, model2path, out_path)

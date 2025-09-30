@@ -65,17 +65,28 @@ def scorer_e(dataset, predictions, answers, lengths, all_classes):
     for key in scores.keys():
         scores[key] = round(100 * np.mean(scores[key]), 2)
     return scores
+import numpy as np
+
+totalscores = np.array([1,2,3])
+scores = np.array([4,5,6])
+
+totalscores = totalscores + scores
+
+round(sum(totalscores) / 10, 2)
 
 def scorer(dataset, predictions, answers, all_classes):
-    total_score = 0.
+    total_score = np.array([0., 0., 0.])
     for (prediction, ground_truths) in zip(predictions, answers):
-        score = 0.
+        score = [0., 0., 0.]
         if dataset in ["trec", "triviaqa", "samsum", "lsht"]:
             prediction = prediction.lstrip('\n').split('\n')[0]
         for ground_truth in ground_truths:
-            score = max(score, dataset2metric[dataset](prediction, ground_truth, all_classes=all_classes))
-        total_score += score
-    return round(100 * total_score / len(predictions), 2)
+            if dataset in ["narrativeqa", "qasper"]: # f1 score now return (f1, precision, recall)
+              temp_score = dataset2metric[dataset](prediction, ground_truth, all_classes=all_classes)
+              print(temp_score, " ", ground_truth)
+              score = score if score[0] > temp_score[0] else temp_score #pick ground truth with highest f1
+        total_score += np.array(score)
+    return np.round(100 * total_score / len(predictions), 2).tolist() #change np.array into list of float to dump
 
 if __name__ == '__main__':
     args = parse_args()
@@ -85,11 +96,13 @@ if __name__ == '__main__':
     all_files = os.listdir(path)
     print("Evaluating on:", all_files)
     for filename in all_files:
+        print("check file exists ", filename)
         if not filename.endswith("jsonl"):
             continue
         predictions, answers, lengths = [], [], []
         dataset = filename.split('.')[0]
         with open(f"{path}/{filename}", "r", encoding="utf-8") as f:
+            print("check processing")
             for line in f:
                 data = json.loads(line)
                 predictions.append(data["pred"])
