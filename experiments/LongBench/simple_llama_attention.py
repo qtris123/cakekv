@@ -176,9 +176,9 @@ def log_decode_attentions(attentions, step_idx: int, square_always: bool, curren
         # Keep accumulator
         decode_rows_per_layer[layer_idx] = rows
 
-def save_attention_data(sample_idx: int, output_dir: str):
+def save_attention_data(sample_idx: int, output_dir: str, data_name: str):
     os.makedirs(output_dir, exist_ok=True)
-    out_path = os.path.join(output_dir, f"attention_sample_{sample_idx}.pkl")
+    out_path = os.path.join(output_dir, f"attention_sample_{sample_idx}_{data_name}.pkl")
     with open(out_path, "wb") as f:
         pickle.dump(attention_storage, f)
     print(f"Saved attention data for sample {sample_idx} "
@@ -250,7 +250,7 @@ def load_model_eager(path, model_name, device):
     tokenizer = AutoTokenizer.from_pretrained(path)
     # Qwen often prefers bf16; others fp16 is fine for inference
     dtype = torch.bfloat16 if "qwen2" in model_name else torch.float16
-    model = AutoModelForCausalLM.from_pretrained(
+    model = AutoModelForCa  usalLM.from_pretrained(
         path,
         torch_dtype=dtype,
         attn_implementation="eager",  # critical for returning attentions
@@ -344,7 +344,7 @@ def step_decode_and_capture(model, input_ids, max_new_tokens, log_every, prefill
 
 @torch.inference_mode()
 def run_inference_with_attention_capture(
-    model, tokenizer, data, max_length, max_new_tokens, model_name,
+    model, tokenizer, data, max_length, max_new_tokens, model_name, data_name,
     save_attention=False, max_samples=1, output_dir="./attention_data",
     prefill_capture="last", log_every=1, device=None
 ):
@@ -400,14 +400,14 @@ def run_inference_with_attention_capture(
         generated_text = tokenizer.decode(gen_ids[0], skip_special_tokens=True) if gen_ids.numel() else ""
         
         os.makedirs("output_data", exist_ok=True)
-        pred_path = os.path.join("output_data", f"output_sample_{sample_count}.json")
+        pred_path = os.path.join("output_data", f"output_sample_{sample_count}_{data_name}.json")
         full_dict = {"prompt" : prompt, "output": generated_text}
         with open(pred_path, "w") as f:
             json.dump(full_dict, f)
         print(f"Generated: {generated_text[:100]}...")
 
         if save_attention:
-            save_attention_data(sample_count, output_dir)
+            save_attention_data(sample_count, output_dir, data_name)
 
         sample_count += 1
 
@@ -439,7 +439,8 @@ if __name__ == '__main__':
 
     # Load test data
     print("Loading test data...")
-    data_file = "data/narrativeqa.jsonl"
+    data_name = "narrativeqa"
+    data_file = f"data/{data_name}.jsonl"
     if os.path.exists(data_file):
         with open(data_file, 'r', encoding='utf-8') as f:
             data = [json.loads(line) for line in f.readlines()]
@@ -453,7 +454,7 @@ if __name__ == '__main__':
     # Run
     run_inference_with_attention_capture(
         model, tokenizer, data,
-        args.max_length, args.max_new_tokens, model_name,
+        args.max_length, args.max_new_tokens, model_name, data_name = data_name,
         save_attention=args.save_attention,
         max_samples=args.max_samples,
         output_dir=args.output_dir,
