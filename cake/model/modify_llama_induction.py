@@ -156,7 +156,7 @@ def llama_attn_forward_cake(
         den = sums_all.sum(dim=1) + 1e-12                               # (bsz,)
 
         # Final layer-level preference score, one per batch
-        pref_score = (num / den).detach().cpu().numpy()
+        pref_score = (num / den).detach().cpu().numpy().squeeze()
         # ---------------------------------------------
         #compute preference score and hh score
         attention_score = tmp_attn_weights[:, :, -self.config.window_size[self.layer_idx]:, :] 

@@ -1,5 +1,6 @@
 import transformers
-from cake.model.modify_llama import llama_model_forward_cake, llama_attn_forward_cake
+#from cake.model.modify_llama import llama_model_forward_cake, llama_attn_forward_cake
+from cake.model.modify_llama_induction import llama_model_forward_cake, llama_attn_forward_cake
 from cake.model.modify_mistral import mistral_model_forward_cake, mistral_attn_forward_cake
 from cake.model.modify_qwen2 import qwen2_model_forward_cake, qwen2_attn_forward_cake
     

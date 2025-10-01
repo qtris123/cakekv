@@ -222,7 +222,6 @@ class CakeprefillKVCache:
         pref_scores = past_key_values.pref_scores
   
         layer_budgets = [pref_score/sum(pref_scores)*self.total_size for pref_score in pref_scores]
-    
         layer_budgets = adjust_budgets(layer_budgets, self.total_size, seq_len-self.window_size,  self.num_layers)
 
         if self.use_cascading:

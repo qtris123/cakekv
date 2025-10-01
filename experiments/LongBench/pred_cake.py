@@ -67,7 +67,7 @@ def build_chat(tokenizer, prompt, model_name):
 @torch.inference_mode()
 def get_pred(model, tokenizer, compress, data, max_length, max_gen, prompt_format, dataset, model_name, model2path, out_path):
 
-    small_data = data[:20]
+    small_data = data[:1]
     for json_obj in tqdm(small_data):
         prompt = prompt_format.format(**json_obj)
         # truncate to fit max_length (we suggest truncate in the middle, since the left and right side may contain crucial instructions)
