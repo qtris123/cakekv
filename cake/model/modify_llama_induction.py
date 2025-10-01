@@ -113,9 +113,9 @@ def llama_attn_forward_cake(
         A_aggr = A.sum(dim=1)                                 # (bsz, Sw, K)
 
         # Hyperparams
-        a     = float(getattr(self.config, "diag_slope", 1.0))   # fixed slope
-        topk  = int(getattr(self.config, "diag_topk", 20))        # number of diagonals to keep
-        edge = 2 # to avoid cases to close to the corner where diagonal's length is very small (1,2,3) => doesn't capture a diagonal's behavior
+        a     = float(getattr(self.config, "diag_slope", -1.2))   # fixed slope
+        topk  = int(getattr(self.config, "diag_topk", 30))        # number of diagonals to keep
+        edge = 20 # to avoid cases to close to the corner where diagonal's length is very small (1,2,3) => doesn't capture a diagonal's behavior
 
         # b in [-(S-Sw), Sw-1]
         b_min = -(S - Sw) + edge

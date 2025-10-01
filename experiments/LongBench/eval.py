@@ -81,7 +81,7 @@ def scorer(dataset, predictions, answers, all_classes):
         if dataset in ["trec", "triviaqa", "samsum", "lsht"]:
             prediction = prediction.lstrip('\n').split('\n')[0]
         for ground_truth in ground_truths:
-            if dataset in ["narrativeqa", "qasper"]: # f1 score now return (f1, precision, recall)
+            if dataset in ["narrativeqa", "qasper","hotpotqa"]: # f1 score now return (f1, precision, recall)
               temp_score = dataset2metric[dataset](prediction, ground_truth, all_classes=all_classes)
               print(temp_score, " ", ground_truth)
               score = score if score[0] > temp_score[0] else temp_score #pick ground truth with highest f1
